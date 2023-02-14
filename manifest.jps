@@ -19,8 +19,8 @@ description:
 globals:
   accessKey: ${fn.password}
   secretKey: ${fn.password}
-  port: 80
-  consolePort: 4949
+  port: 443
+  consolePort: 8443
   exportPath: /export
   
 settings:
