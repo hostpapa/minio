@@ -19,7 +19,7 @@ description:
 globals:
   accessKey: ${fn.password}
   secretKey: ${fn.password}
-  port: 80
+  port: 8080
   consolePort: 4949
   exportPath: /export
   DEPLOY_HOOK: /root/deployLE.sh
