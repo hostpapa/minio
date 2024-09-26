@@ -22,6 +22,10 @@ globals:
   port: 443
   consolePort: 8443
   exportPath: /export
+  DEPLOY_HOOK: /root/deployLE.sh
+  UNDEPLOY_HOOK: /root/undeployLE.sh
+  DEPLOY_HOOK_JS: ${baseUrl}/scripts/deployHook.js
+  BUILD_SCRIPT: ${baseUrl}/scripts/build-cluster.js
   
 settings:
   fields:
@@ -48,6 +52,15 @@ nodes:
       maxCount: ${settings.nodes}
       minCount: ${settings.nodes}
 
+onAfterChangeTopology:
+  - if (${event.response.response.env.sslstate}):
+      cmd[cp]: nft insert rule ip nat PREROUTING ip saddr 0.0.0.0/0 ip daddr 0.0.0.0/0 tcp dport 80 counter redirect to 4949
+  - else:
+      cmd[cp]: |-
+        for REDIRECT_HANDLE in $(/usr/sbin/nft -a list table ip nat 2>&1 | grep 'redirect to 4949'| grep 'dport 80' | sed -r 's/.*#\s+handle\s+([0-9]+)/\1/g' 2>/dev/null); do
+            /usr/sbin/nft delete rule $ip_table nat PREROUTING handle $REDIRECT_HANDLE >>$JEM_CALLS_LOG 2>&1;
+        done
+
 onInstall:
   - cmd[cp]: |-
       jem passwd set -p ${globals.secretKey} -u ${globals.accessKey}
@@ -59,12 +72,43 @@ onInstall:
 
 actions:
   build-cluster:
-    script: build-cluster.js
+    script: ${globals.BUILD_SCRIPT}
     params:
       nodeGroup: cp
       volumePath: ${globals.exportPath}
       port: ${globals.port}
       consolePort: ${globals.consolePort}
+
+  install-LE:
+    - setGlobals:
+          PROTOCOL: https
+    - cmd[cp]: |-
+        mkdir -p /home/jelastic/.minio/certs/host/
+        printf '#!/bin/bash
+        chown -R minio-user:minio-user /home/jelastic/.minio/
+        sed -i "/MINIO_VOLUMES/s|http:|https:|g" /etc/default/minio
+        sed -i "/MINIO_SERVER_URL/s|http:|https:|g" /etc/default/minio
+        sed -i "/MINIO_BROWSER_REDIRECT_URL/s|http:|https:|g" /etc/default/minio
+        sed -i "s|MINIO_OPTS=.*|MINIO_OPTS=\\" --address :443 --console-address :4949 --certs-dir /home/jelastic/.minio/certs\\"|g" /etc/default/minio
+        ' > ${globals.DEPLOY_HOOK}
+        
+        printf '#!/bin/bash
+        sed -i "/MINIO_VOLUMES/s|https:|http:|g" /etc/default/minio
+        sed -i "/MINIO_SERVER_URL/s|https:|http:|g" /etc/default/minio
+        sed -i "/MINIO_BROWSER_REDIRECT_URL/s|https:|http:|g" /etc/default/minio
+        sed -i "s|MINIO_OPTS=.*|MINIO_OPTS=\\" --address :80 --console-address :4949\\"|g" /etc/default/minio
+        ' > ${globals.UNDEPLOY_HOOK}
+    - install:
+      jps: https://raw.githubusercontent.com/jelastic-jps/lets-encrypt/master/manifest.jps?_r=${fn.random}
+      nodeGroup: cp
+      settings:
+        deployHook: ${globals.DEPLOY_HOOK_JS}
+        deployHookType: js
+        undeployHook: ${globals.DEPLOY_HOOK_JS}
+        undeployHookType: js
+        customDomains: ${env.domain}
+    - build-cluster
+    - restartContainers [cp]
 
 success:
   text: /text/success.md
